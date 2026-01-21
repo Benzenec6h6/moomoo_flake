@@ -1,0 +1,4 @@
+[moomoo]
+src = "webpage"
+url = "https://www.moomoo.com/download/linux"
+regex = 'moomoo_desktop_([0-9.]+)_amd64\.deb'

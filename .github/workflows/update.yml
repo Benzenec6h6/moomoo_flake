@@ -1,0 +1,19 @@
+name: Update moomoo
+on:
+  schedule:
+    - cron: '0 0 * * *' # 毎日0時に実行
+  workflow_dispatch:   # 手動実行用
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cacatua/nix-installer-action@v1 # Nixをインストール
+      - name: Run nvfetcher
+        run: |
+          nix run nixpkgs#nvfetcher -- -c nvfetcher.toml # _sourcesを更新
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update moomoo to latest version"
