@@ -1,0 +1,17 @@
+{
+    "moomoo": {
+        "cargoLocks": null,
+        "date": null,
+        "extract": null,
+        "name": "moomoo",
+        "passthru": null,
+        "pinned": false,
+        "src": {
+            "name": null,
+            "sha256": "sha256-N3b8MdDEEWmqkSiDP5KYkjjfIM8KVwz/F4QCpx6rn6A=",
+            "type": "url",
+            "url": "https://softwaredownload.futustatic.com/moomoo_desktop_16.1.14618_amd64.deb"
+        },
+        "version": "16.1.14618"
+    }
+}
