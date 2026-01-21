@@ -1,19 +1,50 @@
 name: Update moomoo
+
 on:
   schedule:
-    - cron: '0 0 * * *' # 毎日0時に実行
-  workflow_dispatch:   # 手動実行用
+    - cron: '0 0 * * *' # 証券アプリは更新が頻繁なため、毎日チェックを推奨
+  workflow_dispatch:
 
 jobs:
   update:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: cacatua/nix-installer-action@v1 # Nixをインストール
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: "nixpkgs=github:NixOS/nixpkgs/nixos-unstable"
+
+      - name: Setup Git
+        run: |
+          git config user.name "nvfetcher-bot"
+          git config user.email "nvfetcher-bot@example.com"
+
+      # nvfetcherはスクレイピング結果が変わらなければ何もしないので、
+      # 以前のキャッシュ（.shake）を消すのは、不整合を防ぐ良い習慣です。
+      - name: Cleanup old nvfetcher cache
+        run: |
+          rm -rf .shake
+          echo "Cache cleaned"
+
       - name: Run nvfetcher
         run: |
-          nix run nixpkgs#nvfetcher -- -c nvfetcher.toml # _sourcesを更新
+          nix run nixpkgs#nvfetcher -- --config nvfetcher.toml
+
+      - name: Run nix flake update
+        run: |
+          nix flake update || true
+
       - name: Commit changes
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "chore: update moomoo to latest version"
+        run: |
+          # _sources/generated.nix, _sources/generated.json, flake.lock を対象にする
+          git add _sources flake.lock || true
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update moomoo version via nvfetcher" || true
+            git push
+          else
+            echo "No changes detected"
+          fi
