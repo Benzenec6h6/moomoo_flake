@@ -1,4 +1,9 @@
 [moomoo]
-src.webpage = "https://www.moomoo.com/download/linux"
-fetch.url = "https://software-static.moomoo.com/moomoo_desktop_$ver_amd64.deb"
-src.regex = 'moomoo_desktop_([0-9.]+)_amd64\.deb'
+[moomoo.src]
+webpage = "https://www.moomoo.com/download/linux"
+# HTML内の "Ver.16.1.14618" から数字だけを抽出
+regex = 'Ver\.([0-9.]+)'
+
+[moomoo.fetch]
+# 特定したドメインとパスを使用
+url = "https://softwaredownload.futustatic.com/moomoo_desktop_$ver_amd64.deb"
