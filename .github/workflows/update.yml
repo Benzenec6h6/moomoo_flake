@@ -2,7 +2,7 @@ name: Update moomoo
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 証券アプリは更新が頻繁なため、毎日チェックを推奨
+    - cron: '0 0 * * SUN'
   workflow_dispatch:
 
 jobs:
