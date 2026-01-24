@@ -15,7 +15,11 @@
           name = "moomoo-desktop-deb";
           src = moomoo-deb;
           dontUnpack = true;
-          installPhase = "cp $src $out";
+          installPhase = ''
+            # $out をディレクトリとして作成し、その中に配置する
+            mkdir -p $out/share/moomoo
+            cp $src $out/share/moomoo/moomoo.deb
+          '';
         };
       };
 
@@ -24,7 +28,8 @@
 
         # 環境変数として.debのパスを渡す
         shellHook = ''
-          export MOOMOO_DEB_PATH="${self.packages.${system}.default}"
+          # パッケージ内のファイルパスを指すように変更
+          export MOOMOO_DEB_PATH="${self.packages.${system}.default}/share/moomoo/moomoo.deb"
           
           echo "=== Moomoo Deployment Shell (nvfetcher version) ==="
           echo "deb path: $MOOMOO_DEB_PATH"
