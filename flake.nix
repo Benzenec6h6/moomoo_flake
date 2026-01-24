@@ -16,9 +16,12 @@
           src = moomoo-deb;
           dontUnpack = true;
           installPhase = ''
-            # $out をディレクトリとして作成し、その中に配置する
             mkdir -p $out/share/moomoo
             cp $src $out/share/moomoo/moomoo.deb
+
+            # リポジトリ内の moomoo.desktop をパッケージの適切な場所に配置
+            mkdir -p $out/share/applications
+            cp ${./moomoo.desktop} $out/share/applications/moomoo.desktop
           '';
         };
       };
