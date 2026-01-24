@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=moomoo (Distrobox)
+Comment=Stock Trading Platform
+Exec=distrobox enter moomoo -- /opt/moomoo/Launch
+Icon=/opt/moomoo/app.png
+Type=Application
+Categories=Finance;
+Terminal=false
