@@ -2,7 +2,7 @@ name: Update moomoo
 
 on:
   schedule:
-    - cron: '0 0 * * SUN'
+    - cron: '0 0 * * 2,4,6'
   workflow_dispatch:
 
 jobs:
