@@ -6,7 +6,7 @@ using `buildFHSEnv` + `bwrap` to run the official deb package.
 ## Background
 
 For a long time I assumed moomoo desktop was Windows-only, and ran it on Ubuntu via Wine.
-While trying out Arch Linux, I stumbled upon the [AUR PKGBUILD](https://aur.archlinux.org/moomoo.git) and discovered that a Linux (deb) build actually exists.
+While trying out Arch Linux, I stumbled upon the [AUR PKGBUILD](https://aur.archlinux.org/packages/moomoo) and discovered that a Linux (deb) build actually exists.
 
 Reading through the PKGBUILD, I noticed the only declared dependency is `libglvnd`, with no kernel-level checks or aggressive anti-cheat involved. This suggested it should run fine outside of Ubuntu/Debian — so I built this flake to make it work on NixOS.
 
