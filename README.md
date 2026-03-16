@@ -58,4 +58,4 @@ nix develop github:Benzenec6h6/moomoo_flake
 ## References
 
 - [moomoo desktop official site](https://www.moomoo.com/)
-- [AUR: moomoo (PKGBUILD)](https://aur.archlinux.org/moomoo.git)
+- [AUR: moomoo (PKGBUILD)](https://aur.archlinux.org/packages/moomoo)
