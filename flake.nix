@@ -15,8 +15,6 @@
 
       sources = pkgs.callPackage ./_sources/generated.nix { };
 
-      # buildFHSEnv の deps からそのまま移植
-      # ※一部、ライブラリとして必要なものを整理
       moomooDeps = with pkgs; [
         libGL gtk3 cairo pango atk gdk-pixbuf glib dbus systemd
         libsecret nss nspr libdrm libgbm libwebp libpng libjpeg
@@ -25,9 +23,12 @@
         libxfixes libxi libxrandr libxrender libxtst libxscrnsaver
         libxkbcommon libxcb-wm libxcb-image libxcb-keysyms libxcb-render-util
         libpulseaudio alsa-lib at-spi2-atk cups
+        cacert
+        google-fonts noto-fonts-cjk-sans noto-fonts-cjk-serif
         tzdata libsm libice zstd expat fontconfig freetype
         libuuid zlib sqlite libxcrypt-legacy python3
         stdenv.cc.cc.lib
+        #openssl  # SSL通信に必要
       ];
 
     in {
@@ -44,8 +45,6 @@
 
         buildInputs = moomooDeps;
 
-        # --- autoPatchelf の挙動調整 ---
-        # FHS版で不要だった(含めていなかった)ものは、ここで無視を宣言してビルドを通す
         autoPatchelfIgnoreMissingDeps = [
           "libssl.so.1.1"
           "libcrypto.so.1.1"
@@ -68,7 +67,6 @@
           "libgstreamer-1.0.so.0"
         ];
 
-        # 手動で makeWrapper を行うため、Nixの自動Qtラップを無効化
         dontWrapQtApps = true;
 
         unpackPhase = ''
@@ -79,13 +77,11 @@
           mkdir -p $out/opt/moomoo $out/bin
           cp -r opt/moomoo/* $out/opt/moomoo/
 
-          # アイコン配置
           mkdir -p $out/share/icons/hicolor/256x256/apps
           cp $out/opt/moomoo/app.png $out/share/icons/hicolor/256x256/apps/moomoo.png
         '';
 
         preFixup = ''
-          # 権限付与により autoPatchelf が内部バイナリを処理できるようにする
           find $out/opt/moomoo -name "*.so*" -exec chmod +x {} +
           chmod +x $out/opt/moomoo/moomoo
           chmod +x $out/opt/moomoo/CrashReporter
@@ -93,20 +89,21 @@
         '';
 
         postFixup = ''
-          # 実行スクリプトの作成
-          # FHS版の profile.nix と Launch の挙動を再現
           makeWrapper $out/opt/moomoo/moomoo $out/bin/moomoo \
             --run "cd $out/opt/moomoo" \
             --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath moomooDeps}:$out/opt/moomoo" \
             --set QT_PLUGIN_PATH "$out/opt/moomoo/plugins" \
             --set LANG "ja_JP.UTF-8" \
             --set LC_ALL "ja_JP.UTF-8" \
+            --set TZDIR "${pkgs.tzdata}/share/zoneinfo" \
             --set TZ "Asia/Tokyo" \
-            --set SSL_CERT_FILE "/etc/ssl/certs/ca-bundle.crt" \
-            --set XDG_DATA_DIRS "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS" \
+            --set SSL_CERT_FILE "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" \
+            --set CURL_CA_BUNDLE "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" \
+            --set NIX_SSL_CERT_FILE "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" \
+            --set FONTCONFIG_FILE "${pkgs.fontconfig.out}/etc/fonts/fonts.conf" \
+            --set XDG_DATA_DIRS "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}" \
             --add-flags "--no-sandbox"
 
-          # Desktopファイルの作成
           mkdir -p $out/share/applications
           cp ${pkgs.makeDesktopItem {
             name = "moomoo";
