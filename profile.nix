@@ -1,5 +1,4 @@
-{ pkgs }:
-let
+{pkgs}: let
   etcFiles = {
     "timezone" = "Asia/Tokyo";
     "default/locale" = ''
@@ -24,12 +23,12 @@ let
     XDG_DATA_DIRS = "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:$XDG_DATA_DIRS";
   };
   mkFiles = pkgs.lib.concatStringsSep "\n" (pkgs.lib.mapAttrsToList (name: value: ''
-    mkdir -p $(dirname /etc/${name})
-    echo "${value}" > /etc/${name}
-  '') etcFiles);
+      mkdir -p $(dirname /etc/${name})
+      echo "${value}" > /etc/${name}
+    '')
+    etcFiles);
   mkEnvs = pkgs.lib.concatStringsSep "\n" (pkgs.lib.mapAttrsToList (n: v: ''export ${n}="${v}"'') envVars);
-in
-''
+in ''
   # --- Setup FHS Files ---
   ${mkFiles}
   # --- Setup Environment Variables ---
