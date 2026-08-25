@@ -8,10 +8,10 @@
 {
   moomoo = {
     pname = "moomoo";
-    version = "16.29.17408";
+    version = "16.29.17418";
     src = fetchurl {
-      url = "https://softwaredownload.futustatic.com/moomoo_desktop_16.29.17408_amd64.deb";
-      sha256 = "sha256-j2dLFZs/ZPJwP+zrCJ2/1EWQBHamErMvmiL+6hvleBQ=";
+      url = "https://softwaredownload.futustatic.com/moomoo_desktop_16.29.17418_amd64.deb";
+      sha256 = "sha256-48Op1qxmtkecmMmzO6mYAY8ueokuJHUNSr9Wk0kcIUk=";
     };
   };
 }
