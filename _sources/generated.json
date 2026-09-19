@@ -8,10 +8,10 @@
         "pinned": false,
         "src": {
             "name": null,
-            "sha256": "sha256-9CdD1HsMLkiaGd3dEdGuNzefvdPNZWICfZXgkhmeioM=",
+            "sha256": "sha256-WSyOcxcEfreWHOSuMrxqal1RUTsRZnPW/mMU6Ilh2Sw=",
             "type": "url",
-            "url": "https://softwaredownload.futustatic.com/moomoo_desktop_16.32.17708_amd64.deb"
+            "url": "https://softwaredownload.futustatic.com/moomoo_desktop_16.33.17808_amd64.deb"
         },
-        "version": "16.32.17708"
+        "version": "16.33.17808"
     }
 }
