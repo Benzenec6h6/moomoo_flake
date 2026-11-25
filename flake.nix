@@ -44,7 +44,7 @@
       export LD_LIBRARY_PATH="/opt/moomoo:/opt/moomoo/lib:/opt/moomoo/plugins/platforms:$LD_LIBRARY_PATH"
       export QT_PLUGIN_PATH="/opt/moomoo/plugins:/opt/moomoo/plugins/platforms:$QT_PLUGIN_PATH"
       export FONTCONFIG_FILE="${fontsConf}"
-      export LD_PRELOAD="/lib/libmimalloc.so:$LD_PRELOAD"
+      export LD_PRELOAD="${pkgs.mimalloc}/lib/libmimalloc.so:$LD_PRELOAD"
       cd "/opt/moomoo"
       exec "./moomoo" "$@"
     '';
