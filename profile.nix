@@ -19,7 +19,6 @@
     LOCALE_ARCHIVE = "/etc/locale-archive";
     SSL_CERT_FILE = "/etc/ssl/certs/ca-bundle.crt";
     CURL_CA_BUNDLE = "/etc/ssl/certs/ca-bundle.crt";
-    FONTCONFIG_FILE = "${pkgs.fontconfig.out}/etc/fonts/fonts.conf";
     XDG_DATA_DIRS = "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:$XDG_DATA_DIRS";
   };
   mkFiles = pkgs.lib.concatStringsSep "\n" (pkgs.lib.mapAttrsToList (name: value: ''

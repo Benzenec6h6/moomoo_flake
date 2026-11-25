@@ -28,13 +28,33 @@
 
     fhsProfile = import ./profile.nix {inherit pkgs;};
 
+    # Nixpkgs公式の fonts.conf 自動生成（FreeTypeセグフォ回避）
+    fontsConf = pkgs.makeFontsConf {
+      fontDirectories = [
+        pkgs.google-fonts
+        pkgs.noto-fonts-cjk-sans
+        pkgs.noto-fonts-cjk-serif
+        pkgs.dejavu_fonts
+      ];
+    };
+
+    # 自前のカスタムLaunchスクリプト（mimalloc注入と環境変数）
+    launchScript = pkgs.writeShellScript "moomoo-launch" ''
+      export MOOMOO_HOME="/opt/moomoo"
+      export LD_LIBRARY_PATH="/opt/moomoo:/opt/moomoo/lib:/opt/moomoo/plugins/platforms:$LD_LIBRARY_PATH"
+      export QT_PLUGIN_PATH="/opt/moomoo/plugins:/opt/moomoo/plugins/platforms:$QT_PLUGIN_PATH"
+      export FONTCONFIG_FILE="${fontsConf}"
+      export LD_PRELOAD="/lib/libmimalloc.so:$LD_PRELOAD"
+      cd "/opt/moomoo"
+      exec "./moomoo" "$@"
+    '';
+
+    # profileを踏み潰していたバインドと余計なフォントバインドを排除した安全な設定
     commonBwrapArgs = [
       "--tmpfs /opt"
       "--dir /opt"
       "--tmpfs /etc"
       "--dir /etc"
-      "--bind /etc/profile /etc/profile"
-      "--bind /etc/bashrc /etc/bashrc"
       "--bind /run/current-system/sw/lib/locale/locale-archive /etc/locale-archive"
       "--bind ${moomooApp}/opt/moomoo /opt/moomoo"
       "--dev-bind /dev /dev"
@@ -47,6 +67,7 @@
     ];
 
     deps = pkgs: (with pkgs; [
+      mimalloc
       libGL
       gtk3
       cairo
@@ -92,13 +113,13 @@
       google-fonts
       noto-fonts-cjk-sans
       noto-fonts-cjk-serif
+      dejavu_fonts
       tzdata
       libsm
       libice
       zstd
       expat
       fontconfig
-      freetype
       libuuid
       zlib
       sqlite
@@ -112,19 +133,17 @@
       targetPkgs = deps;
       extraBwrapArgs = commonBwrapArgs;
       profile = fhsProfile;
-      runScript = "/opt/moomoo/Launch";
+      # 自作の完璧なラッパースクリプトを指定！
+      runScript = "${launchScript}";
     };
   in {
-    # NixOSのinputsから参照するための主要output
     packages.${system} = {
       default = pkgs.symlinkJoin {
         name = "moomoo";
         paths = [
-          # 起動バイナリ
           (pkgs.writeShellScriptBin "moomoo" ''
             exec ${fhsEnv}/bin/moomoo-fhs "$@"
           '')
-          # desktopファイルとアイコン
           (pkgs.makeDesktopItem {
             name = "moomoo";
             desktopName = "moomoo";
@@ -137,17 +156,15 @@
       };
     };
 
-    # デバッグ用
     devShells.${system}.default =
       (pkgs.buildFHSEnv {
         name = "moomoo-fhs-dev";
         targetPkgs = deps;
         extraBwrapArgs = commonBwrapArgs;
         profile = fhsProfile;
-        runScript = "bash";
+        runScript = "bash --login";
       }).env;
 
-    # nix run github:yourname/moomoo-flake で直接起動
     apps.${system}.default = {
       type = "app";
       program = "${self.packages.${system}.default}/bin/moomoo";
