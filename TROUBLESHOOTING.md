@@ -52,6 +52,7 @@
 - **解決策:**
   - Nixpkgs 公式のフォントジェネレータ `pkgs.makeFontsConf` を使って純粋な `fonts.conf` を生成し、`FONTCONFIG_FILE` に設定。
   - ※注意: ホストのフォントディレクトリ（`--ro-bind /etc/fonts`）を丸ごと渡すと、Nerd Fonts や特殊な OpenType フォントが混入して古い FreeType が再クラッシュするため、FHS 側で必要なフォント（Noto, DejaVu）のみに限定することが必須。
+  - ※フェーズ 5 で判明: `makeFontsConf` だけでは「限定」にならなかった。最終的な構成はフェーズ 5 を参照。
 
 ---
 
@@ -94,6 +95,44 @@
 
 ---
 
+### フェーズ 5: フォント設定の再クラッシュ（google-fonts 混入と `makeFontsConf` の罠）
+- **現象:**
+  - `bwrap: Can't mount on symlink destination /etc/fonts` が出て先に進めない。
+  - `--tmpfs /etc/fonts` を削除すると起動はするが、ログイン画面が出たあとすぐに落ちる。
+- **原因の特定:**
+  1. **`/etc/fonts` は `buildFHSEnv` が構築する FHS ルート内では symlink。** bwrap は symlink の上に mount できないため `--tmpfs /etc/fonts` は失敗する。そもそも `FONTCONFIG_FILE` が正しく設定されていれば `/etc/fonts` は参照されないので、潰す必要はなかった。
+  2. **デバッグシェルが本番を再現していなかった。** `profile.nix` に `FONTCONFIG_FILE` がなく、`echo $FONTCONFIG_FILE` が空だった。`fc-list` はデフォルト設定で動いており、ホスト（home-manager-path）の IBM Plex や Nerd Fonts まで見えていた。
+  3. **`deps` に残っていた `google-fonts` が `/usr/share/fonts` に約 9,900 個のフォントを供給していた。** うち可変フォント（`Gantari[wght].ttf` など、ファイル名に `[` を含むもの）が 6,487 件。同梱の古い FreeType（`libftstdui.so`）が再びクラッシュする要因になっていたと考えられる（フォントを絞ったあとにクラッシュが解消した）。
+  4. **`makeFontsConf` は指定したフォントだけを出力するわけではなかった。** `cat $FONTCONFIG_FILE` で確認したところ、指定した 3 つの store パスに加えて、以下のデフォルトディレクトリが `<dir>` として暗黙に入っていた。
+     ```xml
+     <dir prefix="xdg">fonts</dir>
+     <dir>~/.nix-profile/lib/X11/fonts</dir>
+     <dir>~/.nix-profile/share/fonts</dir>
+     <dir>/usr/share/fonts</dir>
+     <dir>/usr/local/share/fonts</dir>
+     <dir>/nix/var/nix/profiles/default/lib/X11/fonts</dir>
+     <dir>/nix/var/nix/profiles/default/share/fonts</dir>
+     ```
+     `FONTCONFIG_FILE` を設定しても、`/usr/share/fonts` 経由で google-fonts が読まれ続けていた。
+- **途中で出たエラー:**
+  - `error: function 'anonymous lambda' called without required argument 'fontsConf'`
+    - `profile.nix` の引数に `fontsConf` を追加したのに、`flake.nix` 側が `import ./profile.nix {inherit pkgs;}` のままだったため。`{inherit pkgs fontsConf;}` に修正。
+- **解決策:**
+  1. `makeFontsConf` をやめ、`pkgs.writeText` で最小限の `fonts.conf` を自前で書き、読むディレクトリを store パスに固定した。
+  2. `deps` と `fontsConf` から `google-fonts` を削除。
+  3. `commonBwrapArgs` から `--tmpfs /etc/fonts` を削除。
+  4. `profile.nix` に `FONTCONFIG_FILE` を追加し、デバッグシェルでも本番と同じ状態で確認できるようにした（`fontsConf` を引数で渡す）。
+- **確認結果:**
+  ```bash
+  cat $FONTCONFIG_FILE | grep '<dir'   # store パス 3 つのみ
+  fc-list | wc -l                      # 9883 → 122
+  fc-list | grep -c '\['               # 6487 → 0
+  fc-list | grep -i -E "plex|gantari|nerd"   # 何も出ない
+  ```
+  `nix run .` で起動し、ログイン後も `core dumped` が発生しなくなった。
+
+---
+
 ## 3. 恒久的な対応（構成の確立）
 
 元の `/opt/moomoo/Launch` は read-only であるため、`pkgs.writeShellScript` を用いて Nix 的に自己完結した専用ランチャースクリプトを定義し、`buildFHSEnv` の `runScript` に設定した。
@@ -103,11 +142,70 @@
 export MOOMOO_HOME="/opt/moomoo"
 export LD_LIBRARY_PATH="/opt/moomoo:/opt/moomoo/lib:/opt/moomoo/plugins/platforms:$LD_LIBRARY_PATH"
 export QT_PLUGIN_PATH="/opt/moomoo/plugins:/opt/moomoo/plugins/platforms:$QT_PLUGIN_PATH"
-export FONTCONFIG_FILE="${fontsConf}"          # makeFontsConf で生成したパス
-export LD_PRELOAD="/lib/libmimalloc.so:$LD_PRELOAD" # glibc 2.44 対策
+export FONTCONFIG_FILE="${fontsConf}"          # writeText で生成した自前の fonts.conf
+export LD_PRELOAD="${pkgs.mimalloc}/lib/libmimalloc.so:$LD_PRELOAD" # glibc 2.44 対策
 cd "/opt/moomoo"
 exec "./moomoo" "$@"
 ```
+
+### 最終的なフォント設定（flake.nix）
+`makeFontsConf` ではなく `writeText` で、読むディレクトリを明示的に固定する。
+
+```nix
+fontsConf = pkgs.writeText "fonts.conf" ''
+  <?xml version="1.0"?>
+  <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+  <fontconfig>
+    <dir>${pkgs.noto-fonts-cjk-sans}/share/fonts</dir>
+    <dir>${pkgs.noto-fonts-cjk-serif}/share/fonts</dir>
+    <dir>${pkgs.dejavu_fonts}/share/fonts</dir>
+    <cachedir>/tmp/fontconfig-cache</cachedir>
+
+    <alias>
+      <family>sans-serif</family>
+      <prefer>
+        <family>Noto Sans CJK JP</family>
+        <family>DejaVu Sans</family>
+      </prefer>
+    </alias>
+    <alias>
+      <family>serif</family>
+      <prefer>
+        <family>Noto Serif CJK JP</family>
+        <family>DejaVu Serif</family>
+      </prefer>
+    </alias>
+    <alias>
+      <family>monospace</family>
+      <prefer>
+        <family>DejaVu Sans Mono</family>
+      </prefer>
+    </alias>
+  </fontconfig>
+'';
+
+fhsProfile = import ./profile.nix {inherit pkgs fontsConf;};
+
+commonBwrapArgs = [
+  "--dir /opt"
+  "--bind ${moomooApp}/opt/moomoo /opt/moomoo"
+  "--bind-try /run/current-system/sw/lib/locale/locale-archive /etc/locale-archive"
+  "--ro-bind-try ${pkgs.tzdata}/share/zoneinfo /usr/share/zoneinfo"
+];
+# deps に google-fonts を入れない
+```
+
+`profile.nix` の先頭と環境変数:
+
+```nix
+{pkgs, fontsConf}: let
+  envVars = {
+    # ...既存の LANG / TZ / SSL など...
+    FONTCONFIG_FILE = "${fontsConf}";
+  };
+  # ...
+```
+
 ---
 
 ## 4. 教訓とノウハウ（NixOS で古い商用バイナリを動かす鉄則）
@@ -120,7 +218,23 @@ exec "./moomoo" "$@"
   - 古いバイナリが新しい glibc のヒープ破壊検知で死ぬ場合、アロケータを mimalloc や jemalloc にすり替えるのが最も副作用の少ない銀の弾丸となる。
 
 - **FHS 内でのフォント管理**
-  - ホストの /etc/fonts を無秩序にバインドすると、互換性のないフォント（OTF やビットマップ、Nerd Fonts）を読み込んで FreeType がセグフォを起こす。pkgs.makeFontsConf で最小限のフォント集合（Noto CJK, DejaVu）を純粋に定義するのが最も堅牢。
+  - ホストの /etc/fonts を無秩序にバインドすると、互換性のないフォント（OTF やビットマップ、Nerd Fonts）を読み込んで FreeType がセグフォを起こす。最小限のフォント集合（Noto CJK, DejaVu）だけを読むようにするのが最も堅牢。
+  - **`pkgs.makeFontsConf` はフォントを限定しない。** 指定したディレクトリに加えて `/usr/share/fonts` や `~/.nix-profile/share/fonts` などのデフォルトパスも `<dir>` として出力する。本当に限定したいときは `pkgs.writeText` で自前の `fonts.conf` を書く。
+  - **`deps`（`targetPkgs`）にフォントパッケージを入れると `/usr/share/fonts` に入る。** `google-fonts` のように可変フォントを大量に含むものは入れない。
+  - **`/etc/fonts` は FHS 内で symlink。** `--tmpfs /etc/fonts` は "Can't mount on symlink destination" で失敗する。`FONTCONFIG_FILE` が効いていれば潰す必要もない。
+
+- **フォント由来の問題の切り分けコマンド**
+  - `echo $FONTCONFIG_FILE`: 空なら設定が効いていない（デバッグシェルでは `profile.nix` 経由で設定する）
+  - `cat $FONTCONFIG_FILE | grep '<dir'`: 実際に読まれるディレクトリの確認
+  - `fc-list | wc -l`: 総数（Noto CJK + DejaVu のみで 122 件）
+  - `fc-list | grep -c '\['`: 可変フォントの件数（0 が目標）
+  - `fc-list | grep -i -E "nerd|plex|gantari"`: 混入チェック
+
+- **デバッグシェルは本番と同じ環境変数を持たせる**
+  - デバッグシェルと `runScript` で環境が違うと、本番と違う状態を調べてしまう。`FONTCONFIG_FILE` のような重要な変数は `profile.nix` に置き、両方に効くようにする。
 
 - **buildFHSEnv のマウント優先度**
   - --bind /etc/profile /etc/profile などを安易に設定すると、profile 引数で生成した初期化処理が丸ごと踏み潰されるため注意が必要。
+
+- **再発に備える**
+  - `flake.lock` をコミットしておく。`nixos-unstable` が再び壊れたとき、動いていた状態に戻せる。
