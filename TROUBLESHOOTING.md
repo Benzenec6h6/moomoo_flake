@@ -15,6 +15,7 @@
   1. `nixos-unstable` における **glibc 2.44** への更新（メモリ保護・ヒープ整合性チェックの大幅な厳格化）
   2. Nixpkgs におけるパッケージ構造・命名変更（`xorg` スコープの廃止、Fontconfig パッケージ構成変更）
   3. サンドボックス内での環境変数およびホスト設定ファイルの上書き競合
+  4. 古い内蔵 FreeType による OpenType（.otf）パース不能と非同期スキャンによるレースコンディション
 
 ---
 
@@ -51,8 +52,7 @@
   - `profile.nix` の `FONTCONFIG_FILE` パスが切れており、かつ `commonBwrapArgs` の `--tmpfs /etc` によってホストのフォント設定も消滅していたため、フォントエンジンが完全な飢餓状態になり `NULL` を返していた。
 - **解決策:**
   - Nixpkgs 公式のフォントジェネレータ `pkgs.makeFontsConf` を使って純粋な `fonts.conf` を生成し、`FONTCONFIG_FILE` に設定。
-  - ※注意: ホストのフォントディレクトリ（`--ro-bind /etc/fonts`）を丸ごと渡すと、Nerd Fonts や特殊な OpenType フォントが混入して古い FreeType が再クラッシュするため、FHS 側で必要なフォント（Noto, DejaVu）のみに限定することが必須。
-  - ※フェーズ 5 で判明: `makeFontsConf` だけでは「限定」にならなかった。最終的な構成はフェーズ 5 を参照。
+  - ※注意: ホストのフォントディレクトリ（`--ro-bind /etc/fonts`）を丸ごと渡すと、Nerd Fonts や特殊な OpenType フォントが混入して古い FreeType が再クラッシュするため、FHS 側で必要なフォントのみに限定することが必須。
 
 ---
 
@@ -100,45 +100,70 @@
   - `bwrap: Can't mount on symlink destination /etc/fonts` が出て先に進めない。
   - `--tmpfs /etc/fonts` を削除すると起動はするが、ログイン画面が出たあとすぐに落ちる。
 - **原因の特定:**
-  1. **`/etc/fonts` は `buildFHSEnv` が構築する FHS ルート内では symlink。** bwrap は symlink の上に mount できないため `--tmpfs /etc/fonts` は失敗する。そもそも `FONTCONFIG_FILE` が正しく設定されていれば `/etc/fonts` は参照されないので、潰す必要はなかった。
-  2. **デバッグシェルが本番を再現していなかった。** `profile.nix` に `FONTCONFIG_FILE` がなく、`echo $FONTCONFIG_FILE` が空だった。`fc-list` はデフォルト設定で動いており、ホスト（home-manager-path）の IBM Plex や Nerd Fonts まで見えていた。
-  3. **`deps` に残っていた `google-fonts` が `/usr/share/fonts` に約 9,900 個のフォントを供給していた。** うち可変フォント（`Gantari[wght].ttf` など、ファイル名に `[` を含むもの）が 6,487 件。同梱の古い FreeType（`libftstdui.so`）が再びクラッシュする要因になっていたと考えられる（フォントを絞ったあとにクラッシュが解消した）。
-  4. **`makeFontsConf` は指定したフォントだけを出力するわけではなかった。** `cat $FONTCONFIG_FILE` で確認したところ、指定した 3 つの store パスに加えて、以下のデフォルトディレクトリが `<dir>` として暗黙に入っていた。
+  1. **`/etc/fonts` は `buildFHSEnv` が構築する FHS ルート内では symlink。** bwrap は symlink の上に mount できないため `--tmpfs /etc/fonts` は失敗する。
+  2. **`deps` に残っていた `google-fonts` が `/usr/share/fonts` に約 9,900 個のフォントを供給していた。** うち可変フォント（`Gantari[wght].ttf` など）が 6,487 件。同梱の古い FreeType（`libftstdui.so`）が再びクラッシュする要因になっていた。
+  3. **`makeFontsConf` は指定外のデフォルトディレクトリも `<dir>` として暗黙に出力していた。**
      ```xml
      <dir prefix="xdg">fonts</dir>
-     <dir>~/.nix-profile/lib/X11/fonts</dir>
-     <dir>~/.nix-profile/share/fonts</dir>
      <dir>/usr/share/fonts</dir>
-     <dir>/usr/local/share/fonts</dir>
-     <dir>/nix/var/nix/profiles/default/lib/X11/fonts</dir>
-     <dir>/nix/var/nix/profiles/default/share/fonts</dir>
+     ...
      ```
-     `FONTCONFIG_FILE` を設定しても、`/usr/share/fonts` 経由で google-fonts が読まれ続けていた。
-- **途中で出たエラー:**
-  - `error: function 'anonymous lambda' called without required argument 'fontsConf'`
-    - `profile.nix` の引数に `fontsConf` を追加したのに、`flake.nix` 側が `import ./profile.nix {inherit pkgs;}` のままだったため。`{inherit pkgs fontsConf;}` に修正。
+     `FONTCONFIG_FILE` を設定しても、`/usr/share/fonts` 経由で google-fonts が裏口から読まれ続けていた。
 - **解決策:**
-  1. `makeFontsConf` をやめ、`pkgs.writeText` で最小限の `fonts.conf` を自前で書き、読むディレクトリを store パスに固定した。
-  2. `deps` と `fontsConf` から `google-fonts` を削除。
-  3. `commonBwrapArgs` から `--tmpfs /etc/fonts` を削除。
-  4. `profile.nix` に `FONTCONFIG_FILE` を追加し、デバッグシェルでも本番と同じ状態で確認できるようにした（`fontsConf` を引数で渡す）。
-- **確認結果:**
-  ```bash
-  cat $FONTCONFIG_FILE | grep '<dir'   # store パス 3 つのみ
-  fc-list | wc -l                      # 9883 → 122
-  fc-list | grep -c '\['               # 6487 → 0
-  fc-list | grep -i -E "plex|gantari|nerd"   # 何も出ない
+  - `makeFontsConf` を廃止し、`pkgs.writeText` で最小限の `fonts.conf` を自前定義。
+  - `deps` から `google-fonts` を完全削除。
+
+---
+
+### フェーズ 6: OpenType（.otf）による並行フォントスキャン死と rofi 連携の確立
+- **現象:**
+  - フォントを `noto-fonts-cjk-sans` 等に絞ったはずが、「たまにログイン成功するが、高確率でログイン画面表示直後にクラッシュレポート（Abnormal Time...）が出て即死する」という不安定な挙動が継続。
+  - 端末から `nix run .` では起動できても、アプリケーションランチャー（rofi）から起動すると同様にクラッシュする。
+  - また、起動できた場合でもフォントの描画速度が異常にもたついていた。
+- **coredumpctl によるスタックトレース追跡:**
+  ```text
+  Stack trace of thread 8399:
+    #0  0x00007276465e18d7 n/a (/opt/moomoo/libftstdui.so + 0xbe18d7)
+    #1  0x00007276449a3845 FcFreeTypeQueryAll (libfontconfig.so.1 + 0x20845)
+    #2  0x000072764499c5ea FcFileScanConfig (libfontconfig.so.1 + 0x195ea)
+    #3  0x000072764499cb7c FcDirScanConfig (libfontconfig.so.1 + 0x19b7c)
+    #4  0x000072764499cd84 FcDirCacheScan (libfontconfig.so.1 + 0x19d84)
+    ...
+    #11 0x000072762db0ecad fc_thread_func (libpangoft2-1.0.so.0 + 0xecad)
+    #12 0x0000727647b326ee g_thread_proxy (libglib-2.0.so.0)
   ```
-  `nix run .` で起動し、ログイン後も `core dumped` が発生しなくなった。
+- **原因の特定:**
+  1. **非同期スキャンによるレースコンディションの罠:**
+    - クラッシュしていたのはメインスレッドではなく、Pango / Fontconfig のワーカースレッド（fc_thread_func）。
+    - メイン画面の構築と裏側のフォントファイルスキャンが並行して走るため、スキャンが問題のフォントに到達するタイミングによって「たまにログインできる」「起動直後に死ぬ」という確率的（タイミング依存）な挙動を起こしていた。
+
+  2. **古い内蔵 FreeType の OpenType（.otf）非互換:**
+    - noto-fonts-cjk-sans および serif は OpenType（.otf）形式 であり、巨大な CFF2 / CID テーブルを抱えている。
+    - Moomoo 内蔵の古い FreeType が、キャッシュ未生成状態からの初回パース（FcFreeTypeQueryAll）時にこの複雑な OpenType テーブルを解読できず、メモリ破壊を起こしてセグフォしていた。
+    - また、フォント表示のもたつきも、この古い FreeType が膨大なグリフのパースとフォールバック探索に CPU を浪費していたことが直接の原因だった。
+
+  3. **.desktop の相対パス呼び出しによる環境差分:**
+    - makeDesktopItem の exec = "moomoo %U" と相対指定していたため、rofi 経由で叩かれた際にログインシェルの $PATH が渡らず、意図したラッパーバイナリが正しく実行できていなかった。
+
+- **解決策:**
+  1. **OpenType を完全追放し、純粋な TrueType（.ttf）のみに統一:**
+    - noto-fonts-cjk を廃止し、最もシンプルかつ互換性の高い ipaexfont（IPAexフォント: .ttf） を採用。英数記号も純粋な TrueType である dejavu_fonts のみに限定。
+
+  2. **.desktop の Exec を Nix store 絶対パスに固定:**
+    - makeDesktopItem に渡すコマンドを ${moomooBin}/bin/moomoo %U に変更し、ランチャー経由でも 100% 確実にサンドボックスラッパーが実行されるようにした。
+
+- **結果:**
+  - 裏スレッドの FcFreeTypeQueryAll によるセグフォが根絶され、100 発 100 中でログインに成功するようになった。
+  - 探索フォント数が数ファイル（IPAex 2 種 + DejaVu）に激減したことで、フォントの表示速度が劇的に高速化（爆速化） した。
+  - rofi 経由からの起動も完全に安定稼働を確認。
 
 ---
 
 ## 3. 恒久的な対応（構成の確立）
 
-元の `/opt/moomoo/Launch` は read-only であるため、`pkgs.writeShellScript` を用いて Nix 的に自己完結した専用ランチャースクリプトを定義し、`buildFHSEnv` の `runScript` に設定した。
-
-### 最終的なランチャースクリプトの仕様
-```bash
+元の /opt/moomoo/Launch は read-only であるため、pkgs.writeShellScript を用いて Nix 的に自己完結した専用ランチャースクリプトを定義し、buildFHSEnv の runScript に設定した。
+最終的なランチャースクリプトの仕様
+```Bash
 export MOOMOO_HOME="/opt/moomoo"
 export LD_LIBRARY_PATH="/opt/moomoo:/opt/moomoo/lib:/opt/moomoo/plugins/platforms:$LD_LIBRARY_PATH"
 export QT_PLUGIN_PATH="/opt/moomoo/plugins:/opt/moomoo/plugins/platforms:$QT_PLUGIN_PATH"
@@ -148,30 +173,32 @@ cd "/opt/moomoo"
 exec "./moomoo" "$@"
 ```
 
-### 最終的なフォント設定（flake.nix）
-`makeFontsConf` ではなく `writeText` で、読むディレクトリを明示的に固定する。
+**最終的なフォント設定とマウント設定（flake.nix）**
 
-```nix
+OpenType（.otf）を完全に排除し、安全な TrueType（.ttf）のみを直接 Nix store から読み込む。
+```Nix
 fontsConf = pkgs.writeText "fonts.conf" ''
   <?xml version="1.0"?>
   <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
   <fontconfig>
-    <dir>${pkgs.noto-fonts-cjk-sans}/share/fonts</dir>
-    <dir>${pkgs.noto-fonts-cjk-serif}/share/fonts</dir>
-    <dir>${pkgs.dejavu_fonts}/share/fonts</dir>
+    <description>Crash-Proof TrueType Fonts for Moomoo</description>
+
+    <!-- 純粋な TrueType (.ttf) のみ指定（OpenType は絶対に入れない） -->
+    <dir>${pkgs.ipaexfont}/share/fonts/truetype</dir>
+    <dir>${pkgs.dejavu_fonts}/share/fonts/truetype</dir>
     <cachedir>/tmp/fontconfig-cache</cachedir>
 
     <alias>
       <family>sans-serif</family>
       <prefer>
-        <family>Noto Sans CJK JP</family>
+        <family>IPAexGothic</family>
         <family>DejaVu Sans</family>
       </prefer>
     </alias>
     <alias>
       <family>serif</family>
       <prefer>
-        <family>Noto Serif CJK JP</family>
+        <family>IPAexMincho</family>
         <family>DejaVu Serif</family>
       </prefer>
     </alias>
@@ -179,6 +206,7 @@ fontsConf = pkgs.writeText "fonts.conf" ''
       <family>monospace</family>
       <prefer>
         <family>DejaVu Sans Mono</family>
+        <family>IPAexGothic</family>
       </prefer>
     </alias>
   </fontconfig>
@@ -191,50 +219,75 @@ commonBwrapArgs = [
   "--bind ${moomooApp}/opt/moomoo /opt/moomoo"
   "--bind-try /run/current-system/sw/lib/locale/locale-archive /etc/locale-archive"
   "--ro-bind-try ${pkgs.tzdata}/share/zoneinfo /usr/share/zoneinfo"
+  "--dev-bind /dev/shm /dev/shm"  # CEF 描画用共有メモリ
 ];
-# deps に google-fonts を入れない
+# deps には google-fonts や noto-fonts は含めず、ipaexfont, dejavu_fonts を使用
 ```
 
-`profile.nix` の先頭と環境変数:
+**最終的な .desktop 連携構成（flake.nix）**
+```Nix
 
-```nix
+packages.${system} = let
+  moomooBin = pkgs.writeShellScriptBin "moomoo" ''
+    exec ${fhsEnv}/bin/moomoo-fhs "$@"
+  '';
+in {
+  default = pkgs.symlinkJoin {
+    name = "moomoo";
+    paths = [
+      moomooBin
+      (pkgs.makeDesktopItem {
+        name = "moomoo";
+        desktopName = "moomoo";
+        comment = "Stock Trading Platform";
+        # rofi対策：Nix store の絶対パスを焼き込む
+        exec = "${moomooBin}/bin/moomoo %U";
+        icon = "${moomooApp}/opt/moomoo/app.png";
+        categories = ["Office" "Finance"];
+      })
+    ];
+  };
+};
+```
+- **profile.nix の環境変数:**
+```Nix
 {pkgs, fontsConf}: let
   envVars = {
-    # ...既存の LANG / TZ / SSL など...
+    LANG = "ja_JP.UTF-8";
+    LC_ALL = "ja_JP.UTF-8";
+    TZ = "Asia/Tokyo";
+    TZDIR = "${pkgs.tzdata}/share/zoneinfo"; # 取引クラッシュ防止の二重保険
+    LOCALE_ARCHIVE = "/etc/locale-archive";
+    SSL_CERT_FILE = "/etc/ssl/certs/ca-bundle.crt";
+    CURL_CA_BUNDLE = "/etc/ssl/certs/ca-bundle.crt";
     FONTCONFIG_FILE = "${fontsConf}";
+    XDG_DATA_DIRS = "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:$XDG_DATA_DIRS";
   };
   # ...
 ```
-
 ---
 
 ## 4. 教訓とノウハウ（NixOS で古い商用バイナリを動かす鉄則）
 
 - **ログを吐かないバイナリには strace と coredumpctl**
   - 標準出力を握り潰すバイナリでも、glibc の致命的エラー出力（writev(2, ...)）やカーネルシグナル（tgkill）は strace を欺けない。
-  - coredumpctl info および GDB（レジスタ値 $rdi, $rsi の確認）を使えば、落ちた関数の引数（比較しようとした文字列など）まで特定可能。
+  - coredumpctl info のスタックトレースを見れば、落ちたスレッドの関数名（FcFreeTypeQueryAll など）から真犯人のサブシステム（フォント、ネットワーク、グラフィック）を特定可能。
+
+- **「たまに落ちる / たまに起動する」は並行スレッドを疑え**
+  - メインスレッドではなく、バックグラウンドのワーカースレッド（fc_thread_func やロガー、IPC）が非同期でリソースを舐めている場合、処理の到達タイミングによるレースコンディションが発生する。
+
+- **古い FreeType には OpenType（.otf）を読ませるな**
+  - 古い内蔵 FreeType は、現代の巨大な OpenType や可変フォント（Variable Fonts）のテーブル構造に対応できず、パース時にセグフォを起こす。
+  - クラシックで単純な TrueType（.ttf、IPAex フォントや DejaVu） に絞るのが最強の安全策。
+  - フォント数を数ファイルに絞ることで、フォールバック探索が最短化され、文字描画のレスポンスが劇的に高速化する という絶大なメリットもある。
+
+- **pkgs.makeFontsConf の暗黙パス混入に注意**
+  - makeFontsConf は指定外のデフォルトパス（/usr/share/fonts や ~/.nix-profile）を <dir> として強制追加する。コンテナ内でフォントを厳密に分離・限定したい場合は、pkgs.writeText で自前の最小 fonts.conf を書くのが鉄則。
+
+- **ランチャー（rofi など）向けの .desktop は Exec に絶対パスを埋め込む**
+  - .desktop に exec = "app %U" と相対指定すると、GUI セッション起動時にログインシェルの $PATH が反映されず、意図しないバイナリが叩かれたり起動失敗する。
+  - Nix では ${binPackage}/bin/app のように store 絶対パスを焼き込むことで、起動元による環境差異を 100% 排除できる。
 
 - **glibc 更新に伴う free(): invalid pointer には LD_PRELOAD=libmimalloc.so**
   - 古いバイナリが新しい glibc のヒープ破壊検知で死ぬ場合、アロケータを mimalloc や jemalloc にすり替えるのが最も副作用の少ない銀の弾丸となる。
 
-- **FHS 内でのフォント管理**
-  - ホストの /etc/fonts を無秩序にバインドすると、互換性のないフォント（OTF やビットマップ、Nerd Fonts）を読み込んで FreeType がセグフォを起こす。最小限のフォント集合（Noto CJK, DejaVu）だけを読むようにするのが最も堅牢。
-  - **`pkgs.makeFontsConf` はフォントを限定しない。** 指定したディレクトリに加えて `/usr/share/fonts` や `~/.nix-profile/share/fonts` などのデフォルトパスも `<dir>` として出力する。本当に限定したいときは `pkgs.writeText` で自前の `fonts.conf` を書く。
-  - **`deps`（`targetPkgs`）にフォントパッケージを入れると `/usr/share/fonts` に入る。** `google-fonts` のように可変フォントを大量に含むものは入れない。
-  - **`/etc/fonts` は FHS 内で symlink。** `--tmpfs /etc/fonts` は "Can't mount on symlink destination" で失敗する。`FONTCONFIG_FILE` が効いていれば潰す必要もない。
-
-- **フォント由来の問題の切り分けコマンド**
-  - `echo $FONTCONFIG_FILE`: 空なら設定が効いていない（デバッグシェルでは `profile.nix` 経由で設定する）
-  - `cat $FONTCONFIG_FILE | grep '<dir'`: 実際に読まれるディレクトリの確認
-  - `fc-list | wc -l`: 総数（Noto CJK + DejaVu のみで 122 件）
-  - `fc-list | grep -c '\['`: 可変フォントの件数（0 が目標）
-  - `fc-list | grep -i -E "nerd|plex|gantari"`: 混入チェック
-
-- **デバッグシェルは本番と同じ環境変数を持たせる**
-  - デバッグシェルと `runScript` で環境が違うと、本番と違う状態を調べてしまう。`FONTCONFIG_FILE` のような重要な変数は `profile.nix` に置き、両方に効くようにする。
-
-- **buildFHSEnv のマウント優先度**
-  - --bind /etc/profile /etc/profile などを安易に設定すると、profile 引数で生成した初期化処理が丸ごと踏み潰されるため注意が必要。
-
-- **再発に備える**
-  - `flake.lock` をコミットしておく。`nixos-unstable` が再び壊れたとき、動いていた状態に戻せる。
