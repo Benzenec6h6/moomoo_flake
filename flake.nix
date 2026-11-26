@@ -26,17 +26,41 @@
       '';
     };
 
-    fhsProfile = import ./profile.nix {inherit pkgs;};
+    fhsProfile = import ./profile.nix {inherit pkgs fontsConf;};
 
     # Nixpkgs公式の fonts.conf 自動生成（FreeTypeセグフォ回避）
-    fontsConf = pkgs.makeFontsConf {
-      fontDirectories = [
-        pkgs.google-fonts
-        pkgs.noto-fonts-cjk-sans
-        pkgs.noto-fonts-cjk-serif
-        pkgs.dejavu_fonts
-      ];
-    };
+    fontsConf = pkgs.writeText "fonts.conf" ''
+      <?xml version="1.0"?>
+      <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+      <fontconfig>
+        <dir>${pkgs.noto-fonts-cjk-sans}/share/fonts</dir>
+        <dir>${pkgs.noto-fonts-cjk-serif}/share/fonts</dir>
+        <dir>${pkgs.dejavu_fonts}/share/fonts</dir>
+        <cachedir>/tmp/fontconfig-cache</cachedir>
+
+        <!-- 最低限の別名(これがないと sans-serif 指定で解決できない場合がある) -->
+        <alias>
+          <family>sans-serif</family>
+          <prefer>
+            <family>Noto Sans CJK JP</family>
+            <family>DejaVu Sans</family>
+          </prefer>
+        </alias>
+        <alias>
+          <family>serif</family>
+          <prefer>
+            <family>Noto Serif CJK JP</family>
+            <family>DejaVu Serif</family>
+          </prefer>
+        </alias>
+        <alias>
+          <family>monospace</family>
+          <prefer>
+            <family>DejaVu Sans Mono</family>
+          </prefer>
+        </alias>
+      </fontconfig>
+    '';
 
     # 自前のカスタムLaunchスクリプト（mimalloc注入と環境変数）
     launchScript = pkgs.writeShellScript "moomoo-launch" ''
@@ -49,21 +73,12 @@
       exec "./moomoo" "$@"
     '';
 
-    # profileを踏み潰していたバインドと余計なフォントバインドを排除した安全な設定
     commonBwrapArgs = [
-      "--tmpfs /opt"
       "--dir /opt"
-      "--tmpfs /etc"
-      "--dir /etc"
-      "--bind /run/current-system/sw/lib/locale/locale-archive /etc/locale-archive"
       "--bind ${moomooApp}/opt/moomoo /opt/moomoo"
-      "--dev-bind /dev /dev"
-      "--bind /proc /proc"
-      "--bind /sys /sys"
-      "--bind /etc/static/localtime /etc/localtime"
-      "--bind /etc/ssl /etc/ssl"
-      "--bind /etc/static/ssl /etc/static/ssl"
-      "--bind ${pkgs.tzdata}/share/zoneinfo /usr/share/zoneinfo"
+      #"--tmpfs /etc/fonts"
+      "--bind-try /run/current-system/sw/lib/locale/locale-archive /etc/locale-archive"
+      "--ro-bind-try ${pkgs.tzdata}/share/zoneinfo /usr/share/zoneinfo"
     ];
 
     deps = pkgs: (with pkgs; [
@@ -110,7 +125,6 @@
       alsa-lib
       at-spi2-atk
       cups
-      google-fonts
       noto-fonts-cjk-sans
       noto-fonts-cjk-serif
       dejavu_fonts
@@ -137,18 +151,21 @@
       runScript = "${launchScript}";
     };
   in {
-    packages.${system} = {
+    packages.${system} = let
+      moomooBin = pkgs.writeShellScriptBin "moomoo" ''
+        exec ${fhsEnv}/bin/moomoo-fhs "$@"
+      '';
+    in {
       default = pkgs.symlinkJoin {
         name = "moomoo";
         paths = [
-          (pkgs.writeShellScriptBin "moomoo" ''
-            exec ${fhsEnv}/bin/moomoo-fhs "$@"
-          '')
+          moomooBin
           (pkgs.makeDesktopItem {
             name = "moomoo";
             desktopName = "moomoo";
             comment = "Stock Trading Platform";
-            exec = "moomoo %U";
+            # Nix store内の絶対パスを指定
+            exec = "${moomooBin}/bin/moomoo %U";
             icon = "${moomooApp}/opt/moomoo/app.png";
             categories = ["Office" "Finance"];
           })
