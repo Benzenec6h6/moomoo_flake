@@ -28,28 +28,31 @@
 
     fhsProfile = import ./profile.nix {inherit pkgs fontsConf;};
 
-    # Nixpkgs公式の fonts.conf 自動生成（FreeTypeセグフォ回避）
+    # OpenType(.otf)を完全排除し、最も安全な古典的TrueType(.ttf)のみで構成
     fontsConf = pkgs.writeText "fonts.conf" ''
       <?xml version="1.0"?>
       <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
       <fontconfig>
-        <dir>${pkgs.noto-fonts-cjk-sans}/share/fonts</dir>
-        <dir>${pkgs.noto-fonts-cjk-serif}/share/fonts</dir>
-        <dir>${pkgs.dejavu_fonts}/share/fonts</dir>
+        <description>Crash-Proof TrueType Fonts for Moomoo</description>
+
+        <!-- 純粋な TrueType (.ttf) のみ指定 -->
+        <dir>${pkgs.ipaexfont}/share/fonts/truetype</dir>
+        <dir>${pkgs.dejavu_fonts}/share/fonts/truetype</dir>
+
+        <cachedir prefix="xdg">fontconfig</cachedir>
         <cachedir>/tmp/fontconfig-cache</cachedir>
 
-        <!-- 最低限の別名(これがないと sans-serif 指定で解決できない場合がある) -->
         <alias>
           <family>sans-serif</family>
           <prefer>
-            <family>Noto Sans CJK JP</family>
+            <family>IPAexGothic</family>
             <family>DejaVu Sans</family>
           </prefer>
         </alias>
         <alias>
           <family>serif</family>
           <prefer>
-            <family>Noto Serif CJK JP</family>
+            <family>IPAexMincho</family>
             <family>DejaVu Serif</family>
           </prefer>
         </alias>
@@ -57,6 +60,7 @@
           <family>monospace</family>
           <prefer>
             <family>DejaVu Sans Mono</family>
+            <family>IPAexGothic</family>
           </prefer>
         </alias>
       </fontconfig>
@@ -76,7 +80,6 @@
     commonBwrapArgs = [
       "--dir /opt"
       "--bind ${moomooApp}/opt/moomoo /opt/moomoo"
-      #"--tmpfs /etc/fonts"
       "--bind-try /run/current-system/sw/lib/locale/locale-archive /etc/locale-archive"
       "--ro-bind-try ${pkgs.tzdata}/share/zoneinfo /usr/share/zoneinfo"
     ];
@@ -125,8 +128,8 @@
       alsa-lib
       at-spi2-atk
       cups
-      noto-fonts-cjk-sans
-      noto-fonts-cjk-serif
+      #noto-fonts-cjk-sans
+      #noto-fonts-cjk-serif
       dejavu_fonts
       tzdata
       libsm
